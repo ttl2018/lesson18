@@ -1,0 +1,108 @@
+Roles for SSO
+
+Для проекта SSO нужно добавить систему ролей для унификации логин менеджмента.
+Изменения в базе
+1. Репозиторий ролей - таблица role, каждая роль будет иметь 5 основных колонок - code, name,
+ description, fk_scope, Section. 
+Code - UPPER_CASE_CODES, 
+Name - User Friendly Role Name, 
+Description - Some explanations for the role in the scope, линк на скоуп к которому роль относится, 
+Section - секция портала - Administration, Clients, Billing, Forms, etc.
+2. Репозиторий групп - таблицы group & group_role. Группа будет иметь два поля - name и fk_scope. 
+group_role - это many-to-many между group и role. Так же на group_role дополнительно будут 
+5 чекбоксов - read, create, update, delete, execute
+
+
+3. Линки. Линки бывают 2 типов - user_group_link и user_role_link, каждая имеет линку на юзера и скоуп 
+через fk_user и fk_scope, разница в том, что user_group_link ссылается на группу через fk_group и всё, 
+а вот user_role_link дополнительно имеет булевые поля read, create, update, delete, execute
+
+4. Для таблицы user нужно добавить 2 колонки - name VARCHAR(255), email VARCHAR(255)
+5. Для таблицы scope добавить колонку description
+
+Общие правила
+Общие правила для 
+линок 
+group_role и user_role_link - если все чекбоксы(read, create, update, delete, execute) 
+анчекнуты, то линка удаляется, 
+если есть хотя бы один - линка создается\апдейтится. 
+Чекбокс read должен быть проставлен, если хоть один другой чекбокс чекнут, 
+то есть нельзя дать update без read.
+
+Когда запрашиваются роли для юзера система высчитывает высшие возможные привилегии, 
+то есть если у меня есть пользователь John который состоит в группе, 
+которая дает доступ read + create к роли ROLE, 
+но у него так же есть персональная линка на роль ROLE через user_role_link с привилегией execute, 
+то система должна отдать привилегии read + create + execute. 
+В то же время если у группы есть привилегии read + update и существует линка на ту же роль только с read, 
+система должна вернуть привилегии read + update следую правилу наивысших привилегий.
+
+API
+Для взаимодействия с новыми энтити нам нужны следующие методы:
+RestEndpointController 
+URL: /getPrivileges
+Request: 
+@Required String token
+@Required String scope
+Response:
+List<Privilege> privileges
+Class: Privilege {
+	String roleName
+	boolean read
+	boolean create
+	boolena update
+	boolean delete
+	boolean execute
+}
+
+Так же нужен новый контроллер для менеджмента пермишенов, 
+на данный момент sso сервер не имеет своего собственного UI а для этой фичи его нужно иметь.
+Базовый путь: */manage/**
+Эндпоинты
+Роли:
+	getRoles, optional paging, requires scope, filter by description and section
+	getSections, return all unique sections by scope
+	assignRole
+		Request {
+			Integer userId
+			Integer roleId
+			boolean read
+			boolean create
+			boolena update
+			boolean delete
+			boolean execute
+		}
+		Этот метод должен проверять есть ли у юзера энтити user_scope для scope к которому принадлежит roleId, если нет - пробросить exception
+	getUserRoles, requires scope and user
+Группы:
+	getGroups, paged request, filter by scope
+	deleteGroup by ID
+	createGroup
+	assignUser
+	setPermissions
+		Request {
+			Integer groupId
+			List<Privilege>
+		}
+		class Privilege {
+			Integer roleId
+			boolean read
+			boolean create
+			boolena update
+			boolean delete
+			boolean execute
+		}
+		Этот метод должен:
+		1. Посмотреть есть ли все упомянутые роли в roleId для скоупа для которого создана группа, если хотя бы одна роль относится к другому скоупу - прокинуть exception
+		2. Убрать из списка все роли, если там ни один чекбокс не чекнут 
+		3. Всем ролям у которых есть чекнутый чекбокс create\update\delete\execute выставить read, если этого не сделано 
+		4. Удалить линки на все привилегии, если их roleId не упомянуты
+		5. Создать\обновить линки группы на роли
+Скоупы:
+	getScopes
+Юзеры:
+	getScopeUsers, paged request, requires scope
+	getGroupUsers, paged request, requires group
+	getUsersHavingRole, paged request, requires role
+	getUserPrivileges, requires scope, requires user, return calculated privileges as in /getPrivileges
+	getUsersHavingPrivilege, requires role, requires checkboxes checked, find all users who have at least one of mentioned privileges
